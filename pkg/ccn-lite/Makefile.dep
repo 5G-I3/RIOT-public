@@ -3,3 +3,4 @@ USEMODULE += evtimer
 USEMODULE += random
 USEMODULE += timex
 USEMODULE += posix_headers
+USEPKG += libicnl

@@ -72,6 +72,10 @@ void gnrc_sixlowpan_dispatch_recv(gnrc_pktsnip_t *pkt, void *context,
     (void)context;
     (void)page;
 #ifndef MODULE_GNRC_IPV6
+#ifdef MODULE_GNRC_ICNLOWPAN_HC
+    type = GNRC_NETTYPE_CCN;
+    pkt->type = type;
+#else
     type = GNRC_NETTYPE_UNDEF;
     for (gnrc_pktsnip_t *ptr = pkt; (ptr || (type == GNRC_NETTYPE_UNDEF));
          ptr = ptr->next) {
@@ -80,6 +84,7 @@ void gnrc_sixlowpan_dispatch_recv(gnrc_pktsnip_t *pkt, void *context,
             break;
         }
     }
+#endif
 #else   /* MODULE_GNRC_IPV6 */
     /* just assume normal IPv6 traffic */
     type = GNRC_NETTYPE_IPV6;
@@ -252,6 +257,11 @@ static void _receive(gnrc_pktsnip_t *pkt)
         return;
     }
 #endif
+#ifdef MODULE_GNRC_ICNLOWPAN_HC
+    else if (true) {
+        pkt->type = GNRC_NETTYPE_CCN;
+    }
+#endif
     else {
         DEBUG("6lo: dispatch %02x... is not supported\n", dispatch[0]);
         gnrc_pktbuf_release(pkt);
@@ -320,6 +330,12 @@ static void _send(gnrc_pktsnip_t *pkt)
 #ifdef MODULE_GNRC_SIXLOWPAN_IPHC
     if (netif->flags & GNRC_NETIF_FLAGS_6LO_HC) {
         gnrc_sixlowpan_iphc_send(pkt, NULL, 0);
+        return;
+    }
+#endif
+#ifdef MODULE_GNRC_ICNLOWPAN_HC
+    if (netif->flags & GNRC_NETIF_FLAGS_6LO_HC) {
+        gnrc_sixlowpan_multiplex_by_size(pkt, datagram_size, netif, 0);
         return;
     }
 #endif

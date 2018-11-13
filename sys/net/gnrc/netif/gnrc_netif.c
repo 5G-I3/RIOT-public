@@ -1215,6 +1215,13 @@ static void _init_from_device(gnrc_netif_t *netif)
     assert(res == sizeof(tmp));
     netif->device_type = (uint8_t)tmp;
     gnrc_netif_ipv6_init_mtu(netif);
+
+#if IS_USED(MODULE_GNRC_ICNLOWPAN_HC) && IS_USED(MODULE_GNRC_SIXLOWPAN)
+    netif->dev->driver->get(dev, NETOPT_MAX_PDU_SIZE, &tmp, sizeof(tmp));
+    netif->flags |= GNRC_NETIF_FLAGS_6LO_HC;
+    netif->sixlo.max_frag_size = tmp;
+#endif
+
     _update_l2addr_from_dev(netif);
 }
 
