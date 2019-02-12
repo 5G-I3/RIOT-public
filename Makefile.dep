@@ -215,6 +215,14 @@ ifneq (,$(filter gnrc_sixlowpan_frag,$(USEMODULE)))
   USEMODULE += xtimer
 endif
 
+ifneq (,$(filter gnrc_sixlowpan_frag_minfwd,$(USEMODULE)))
+  USEMODULE += gnrc_netif_pktq
+  USEMODULE += gnrc_sixlowpan
+  USEMODULE += gnrc_sixlowpan_frag
+  USEMODULE += gnrc_sixlowpan_frag_hint
+  USEMODULE += gnrc_sixlowpan_frag_vrb
+endif
+
 ifneq (,$(filter gnrc_sixlowpan_iphc,$(USEMODULE)))
   USEMODULE += gnrc_ipv6
   USEMODULE += gnrc_sixlowpan

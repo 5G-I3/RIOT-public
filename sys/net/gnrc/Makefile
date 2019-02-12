@@ -88,6 +88,9 @@ endif
 ifneq (,$(filter gnrc_sixlowpan_frag,$(USEMODULE)))
   DIRS += network_layer/sixlowpan/frag
 endif
+ifneq (,$(filter gnrc_sixlowpan_frag_minfwd,$(USEMODULE)))
+  DIRS += network_layer/sixlowpan/frag/minfwd
+endif
 ifneq (,$(filter gnrc_sixlowpan_frag_vrb,$(USEMODULE)))
   DIRS += network_layer/sixlowpan/frag/vrb
 endif
