@@ -128,10 +128,18 @@ void rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
 static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                      size_t offset, unsigned page)
 {
-    gnrc_sixlowpan_rbuf_t *entry;
+    union {
+        gnrc_sixlowpan_rbuf_base_t *super;
+        gnrc_sixlowpan_rbuf_t *rbuf;
+    } entry;
     sixlowpan_frag_n_t *frag = pkt->data;
     uint8_t *data = ((uint8_t *)pkt->data) + sizeof(sixlowpan_frag_t);
+    const uint8_t *src = gnrc_netif_hdr_get_src_addr(netif_hdr);
+    const uint8_t *dst = gnrc_netif_hdr_get_dst_addr(netif_hdr);
     size_t frag_size;
+    uint16_t datagram_size = byteorder_ntohs(frag->disp_size) &
+                             SIXLOWPAN_FRAG_SIZE_MASK;
+    uint16_t tag = byteorder_ntohs(frag->tag);
 
     /* check if provided offset is the same as in fragment */
     assert(((((frag->disp_size.u8[0] & SIXLOWPAN_FRAG_DISP_MASK) ==
@@ -139,12 +147,9 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
            ((((frag->disp_size.u8[0] & SIXLOWPAN_FRAG_DISP_MASK) ==
                 SIXLOWPAN_FRAG_N_DISP)) && (offset == (frag->offset * 8U))));
     rbuf_gc();
-    entry = _rbuf_get(gnrc_netif_hdr_get_src_addr(netif_hdr), netif_hdr->src_l2addr_len,
-                      gnrc_netif_hdr_get_dst_addr(netif_hdr), netif_hdr->dst_l2addr_len,
-                      byteorder_ntohs(frag->disp_size) & SIXLOWPAN_FRAG_SIZE_MASK,
-                      byteorder_ntohs(frag->tag), page);
-
-    if (entry == NULL) {
+    if ((entry.rbuf = _rbuf_get(src, netif_hdr->src_l2addr_len,
+                                dst, netif_hdr->dst_l2addr_len,
+                                datagram_size, tag, page)) == NULL) {
         DEBUG("6lo rbuf: reassembly buffer full.\n");
         gnrc_pktbuf_release(pkt);
         return RBUF_ADD_ERROR;
@@ -162,19 +167,19 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
         data++; /* FRAGN header is one byte longer (offset) */
     }
 
-    if ((offset + frag_size) > entry->super.datagram_size) {
+    if ((offset + frag_size) > entry.super->datagram_size) {
         DEBUG("6lo rfrag: fragment too big for resulting datagram, discarding datagram\n");
-        gnrc_pktbuf_release(entry->pkt);
+        gnrc_pktbuf_release(entry.rbuf->pkt);
         gnrc_pktbuf_release(pkt);
-        rbuf_rm(entry);
+        rbuf_rm(entry.rbuf);
         return RBUF_ADD_ERROR;
     }
 
-    switch (_check_fragments(&entry->super, frag_size, offset)) {
+    switch (_check_fragments(entry.super, frag_size, offset)) {
         case RBUF_ADD_REPEAT:
             DEBUG("6lo rfrag: overlapping intervals, discarding datagram\n");
-            gnrc_pktbuf_release(entry->pkt);
-            rbuf_rm(entry);
+            gnrc_pktbuf_release(entry.rbuf->pkt);
+            rbuf_rm(entry.rbuf);
             return RBUF_ADD_REPEAT;
         case RBUF_ADD_DUPLICATE:
             gnrc_pktbuf_release(pkt);
@@ -183,21 +188,21 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
             break;
     }
 
-    if (_rbuf_update_ints(&entry->super, offset, frag_size)) {
+    if (_rbuf_update_ints(entry.super, offset, frag_size)) {
         DEBUG("6lo rbuf: add fragment data\n");
-        entry->super.current_size += (uint16_t)frag_size;
+        entry.super->current_size += (uint16_t)frag_size;
         if (offset == 0) {
 #ifdef MODULE_GNRC_SIXLOWPAN_IPHC
             if (sixlowpan_iphc_is(data)) {
                 gnrc_pktsnip_t *frag_hdr = gnrc_pktbuf_mark(pkt,
                         sizeof(sixlowpan_frag_t), GNRC_NETTYPE_SIXLOWPAN);
                 if (frag_hdr == NULL) {
-                    gnrc_pktbuf_release(entry->pkt);
+                    gnrc_pktbuf_release(entry.rbuf->pkt);
                     gnrc_pktbuf_release(pkt);
-                    rbuf_rm(entry);
+                    rbuf_rm(entry.rbuf);
                     return RBUF_ADD_ERROR;
                 }
-                gnrc_sixlowpan_iphc_recv(pkt, entry, 0);
+                gnrc_sixlowpan_iphc_recv(pkt, entry.rbuf, 0);
                 return RBUF_ADD_SUCCESS;
             }
             else
@@ -206,10 +211,10 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                 data++;
             }
         }
-        memcpy(((uint8_t *)entry->pkt->data) + offset, data,
+        memcpy(((uint8_t *)entry.rbuf->pkt->data) + offset, data,
                frag_size);
     }
-    gnrc_sixlowpan_frag_rbuf_dispatch_when_complete(entry, netif_hdr);
+    gnrc_sixlowpan_frag_rbuf_dispatch_when_complete(entry.rbuf, netif_hdr);
     gnrc_pktbuf_release(pkt);
     return RBUF_ADD_SUCCESS;
 }
