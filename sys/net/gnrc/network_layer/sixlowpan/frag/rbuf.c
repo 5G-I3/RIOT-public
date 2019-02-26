@@ -21,9 +21,14 @@
 #include "net/gnrc.h"
 #include "net/gnrc/sixlowpan.h"
 #include "net/gnrc/sixlowpan/frag.h"
-#ifdef  MODULE_GNRC_SIXLOWPAN_FRAG_VRB
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+#include "net/gnrc/sixlowpan/frag/minfwd.h"
+#ifdef MODULE_GNRC_IPV6_NIB
+#include "net/gnrc/ipv6/nib.h"
+#endif
+#endif
+/* no #ifdef to include GNRC_SIXLOWPAN_FRAG_VRB_SIZE into RBUF_INT_SIZE */
 #include "net/gnrc/sixlowpan/frag/vrb.h"
-#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_VRB */
 #include "net/sixlowpan.h"
 #include "thread.h"
 #include "xtimer.h"
@@ -42,7 +47,8 @@
 #ifndef RBUF_INT_SIZE
 /* same as ((int) ceil((double) N / D)) */
 #define DIV_CEIL(N, D) (((N) + (D) - 1) / (D))
-#define RBUF_INT_SIZE (DIV_CEIL(IPV6_MIN_MTU, GNRC_SIXLOWPAN_FRAG_SIZE) * RBUF_SIZE)
+#define RBUF_INT_SIZE (DIV_CEIL(IPV6_MIN_MTU, GNRC_SIXLOWPAN_FRAG_SIZE) * \
+                       (RBUF_SIZE + GNRC_SIXLOWPAN_FRAG_VRB_SIZE))
 #endif
 
 static gnrc_sixlowpan_rbuf_int_t rbuf_int[RBUF_INT_SIZE];
@@ -131,6 +137,9 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
     union {
         gnrc_sixlowpan_rbuf_base_t *super;
         gnrc_sixlowpan_rbuf_t *rbuf;
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+        gnrc_sixlowpan_frag_vrb_t *vrb;
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
     } entry;
     sixlowpan_frag_n_t *frag = pkt->data;
     uint8_t *data = ((uint8_t *)pkt->data) + sizeof(sixlowpan_frag_t);
@@ -147,6 +156,45 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
            ((((frag->disp_size.u8[0] & SIXLOWPAN_FRAG_DISP_MASK) ==
                 SIXLOWPAN_FRAG_N_DISP)) && (offset == (frag->offset * 8U))));
     rbuf_gc();
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+    if ((offset > 0) &&
+        (entry.vrb = gnrc_sixlowpan_frag_vrb_get(src, netif_hdr->src_l2addr_len,
+                                                dst, netif_hdr->dst_l2addr_len,
+                                                datagram_size, tag)) != NULL) {
+        DEBUG("6lo rbuf minfwd: VRB entry found, trying to forward\n");
+        frag_size = pkt->size - sizeof(sixlowpan_frag_n_t);
+        data++; /* FRAGN header is one byte longer (offset) */
+        switch (_check_fragments(entry.super, frag_size, offset)) {
+            case RBUF_ADD_REPEAT:
+                DEBUG("6lo rbuf minfwd: overlap found; dropping VRB\n");
+                gnrc_sixlowpan_frag_vrb_rm(entry.vrb);
+                /* we don't repeat for VRB */
+                gnrc_pktbuf_release(pkt);
+                return RBUF_ADD_ERROR;
+            case RBUF_ADD_DUPLICATE:
+                DEBUG("6lo rbuf minfwd: not forwarding duplicate\n");
+                gnrc_pktbuf_release(pkt);
+                return RBUF_ADD_SUCCESS;
+            default:
+                break;
+        }
+        if (_rbuf_update_ints(entry.super, offset, frag_size)) {
+            DEBUG("6lo rbuf minfwd: add fragment data\n");
+            if (gnrc_sixlowpan_frag_minfwd_forward(entry.vrb, pkt, frag_size,
+                                                   page) < 0) {
+                /* can only be -ENOMEM, so we don't have to free */
+                DEBUG("6lo rbuf minfwd: unable to forward fragment\n");
+                return RBUF_ADD_ERROR;
+            }
+        }
+        else {
+            DEBUG("6lo rbuf: can't add fragment data");
+            gnrc_pktbuf_release(pkt);
+        }
+        return RBUF_ADD_SUCCESS;
+    }
+    else
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
     if ((entry.rbuf = _rbuf_get(src, netif_hdr->src_l2addr_len,
                                 dst, netif_hdr->dst_l2addr_len,
                                 datagram_size, tag, page)) == NULL) {
@@ -209,8 +257,43 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
 #endif
             if (data[0] == SIXLOWPAN_UNCOMP) {
                 data++;
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+                gnrc_sixlowpan_frag_vrb_t *vrbe;
+
+                /* only try minimal forwarding when fragment is the only
+                 * fragment in reassembly buffer yet */
+                if ((entry.super->current_size == frag_size) &&
+                    (vrbe = gnrc_sixlowpan_frag_minfwd_vrbe_from_route(
+                        data, frag_size, entry.rbuf->pkt->type,
+                        gnrc_netif_hdr_get_netif(netif_hdr), entry.super
+                    ))) {
+                    DEBUG("6lo rbuf minfwd: found route, trying to forward\n");
+                    /* vrbe->super.current_size is already frag_size from
+                     * entry.super, so keep frag_size 0 */
+                    int res = gnrc_sixlowpan_frag_minfwd_forward(vrbe, pkt, 0,
+                                                                 page);
+
+                    /* prevent intervals from being deleted (they are in the
+                     * VRB now) */
+                    entry.rbuf->super.ints = NULL;
+                    gnrc_pktbuf_release(entry.rbuf->pkt);
+                    rbuf_rm(entry.rbuf);
+                    return (res == 0) ? RBUF_ADD_SUCCESS : RBUF_ADD_ERROR;
+                }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
             }
         }
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+        DEBUG("6lo rbuf minfwd: just do normal reassembly\n");
+        if (gnrc_pktbuf_realloc_data(entry.rbuf->pkt,
+                                     entry.super->datagram_size) != 0) {
+            DEBUG("6lo rbuf minfwd: can't allocate packet data\n");
+            gnrc_pktbuf_release(entry.rbuf->pkt);
+            rbuf_rm(entry.rbuf);
+            gnrc_pktbuf_release(pkt);
+            return RBUF_ADD_ERROR;
+        }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
         memcpy(((uint8_t *)entry.rbuf->pkt->data) + offset, data,
                frag_size);
     }
@@ -388,14 +471,21 @@ static gnrc_sixlowpan_rbuf_t *_rbuf_get(const void *src, size_t src_len,
         default:
             reass_type = GNRC_NETTYPE_UNDEF;
     }
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+    res->pkt = gnrc_pktbuf_add(NULL, NULL, 0, reass_type);
+#else   /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
     res->pkt = gnrc_pktbuf_add(NULL, NULL, size, reass_type);
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
     if (res->pkt == NULL) {
         DEBUG("6lo rfrag: can not allocate reassembly buffer space.\n");
         return NULL;
     }
 
-    *((uint64_t *)res->pkt->data) = 0;  /* clean first few bytes for later
-                                               * look-ups */
+    /* res->pkt->data may be NULL if `size == 0` */
+    if (res->pkt->data != NULL) {
+        *((uint64_t *)res->pkt->data) = 0;  /* clean first few bytes for later
+                                             * look-ups */
+    }
     res->super.datagram_size = size;
     res->super.arrival = now_usec;
     memcpy(res->super.src, src, src_len);
