@@ -823,6 +823,7 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
                        payload_offset - sizeof(ipv6_hdr_t));
     }
     if ((rbuf == NULL) &&
+        /* (rbuf == NULL) => forwarding is not affected by this */
         (gnrc_pktbuf_realloc_data(ipv6, uncomp_hdr_len + payload_len) != 0)) {
         DEBUG("6lo iphc: no space left to copy payload\n");
         _recv_error_release(sixlo, ipv6, rbuf);
@@ -851,6 +852,7 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
                 }
             }
             if ((ipv6 == NULL) || (res < 0)) {
+                /* TODO fall-back to reassembly in minfwd when ipv6 != NULL */
                 gnrc_sixlowpan_frag_vrb_rm(vrbe);
             }
             gnrc_pktbuf_release(sixlo);

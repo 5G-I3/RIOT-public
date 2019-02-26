@@ -596,7 +596,12 @@ static int _rbuf_get(const void *src, size_t src_len,
             reass_type = GNRC_NETTYPE_UNDEF;
     }
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_VRB
+# ifdef MODULE_GNRC_SIXLOWPAN_IPHC
+    /* only allocate enough space for IPv6 header */
+    res->pkt = gnrc_pktbuf_add(NULL, NULL, sizeof(ipv6_hdr_t), reass_type);
+# else  /* MODULE_GNRC_SIXLOWPAN_IPHC */
     res->pkt = gnrc_pktbuf_add(NULL, NULL, 0, reass_type);
+# endif /* MODULE_GNRC_SIXLOWPAN_IPHC */
 #else   /* MODULE_GNRC_SIXLOWPAN_FRAG_VRB */
     res->pkt = gnrc_pktbuf_add(NULL, NULL, size, reass_type);
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_VRB */
