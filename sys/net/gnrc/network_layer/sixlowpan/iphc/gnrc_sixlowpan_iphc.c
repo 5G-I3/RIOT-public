@@ -122,26 +122,23 @@ static inline bool _context_overlaps_iid(gnrc_sixlowpan_ctx_t *ctx,
  *
  * @param[in] pkt                   The IPHC encoded packet
  * @param[in] offset                The offset of the NHC encoded header
- * @param[in] ipv6_payload_len      Length of the unencoded, reassembled IPv6
- *                                  datagram in @p ipv6 with out the outer-most
- *                                  IPv6 header
  * @param[out] ipv6                 The packet to write the decoded data to
  * @param[in,out] uncomp_hdr_len    Number of bytes already decoded into @p ipv6
  *                                  by IPHC and other NHC. Adds size of @ref
  *                                  udp_hdr_t after successful UDP header
  *                                  decompression
+ * @param[in] rbuf                  reassembly buffer entry for datagram length
  *
  * @return  The offset after UDP NHC header on success.
  * @return  0 on error.
  */
 static size_t _iphc_nhc_udp_decode(gnrc_pktsnip_t *sixlo, size_t offset,
-                                   gnrc_pktsnip_t *ipv6, size_t *uncomp_hdr_len)
+                                   gnrc_pktsnip_t *ipv6, size_t *uncomp_hdr_len,
+                                   const gnrc_sixlowpan_rbuf_t *rbuf)
 {
     uint8_t *payload = sixlo->data;
     ipv6_hdr_t *ipv6_hdr;
     udp_hdr_t *udp_hdr;
-    bool frag = true;   /* datagram is fragmented => infer payload length from
-                         * ipv6 snip (== reassembly buffer space) */
     uint16_t payload_len;
     uint8_t udp_nhc = payload[offset++];
     uint8_t tmp;
@@ -153,8 +150,6 @@ static size_t _iphc_nhc_udp_decode(gnrc_pktsnip_t *sixlo, size_t offset,
             DEBUG("6lo: unable to decode UDP NHC (not enough buffer space)\n");
             return 0;
         }
-        frag = false;   /* datagram was not fragmented => infer payload length
-                         * from original 6Lo packet*/
     }
     ipv6_hdr = ipv6->data;
     udp_hdr = (udp_hdr_t *)((uint8_t *)ipv6->data + *uncomp_hdr_len);
@@ -205,8 +200,8 @@ static size_t _iphc_nhc_udp_decode(gnrc_pktsnip_t *sixlo, size_t offset,
         udp_hdr->checksum.u8[1] = payload[offset++];
     }
 
-    if (frag) {
-        payload_len = ipv6->size - *uncomp_hdr_len;
+    if (rbuf) {
+        payload_len = rbuf->super.datagram_size - *uncomp_hdr_len;
     }
     else {
         payload_len = sixlo->size + sizeof(udp_hdr_t) - offset;
@@ -242,6 +237,9 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
     size_t uncomp_hdr_len = sizeof(ipv6_hdr_t);
     gnrc_sixlowpan_ctx_t *ctx = NULL;
     gnrc_sixlowpan_rbuf_t *rbuf = rbuf_ptr;
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+    gnrc_sixlowpan_frag_vrb_t *vrbe = NULL;
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
 
     if (rbuf != NULL) {
         ipv6 = rbuf->pkt;
@@ -548,7 +546,8 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
         switch (iphc_hdr[payload_offset] & NHC_ID_MASK) {
             case NHC_UDP_ID: {
                 payload_offset = _iphc_nhc_udp_decode(sixlo, payload_offset,
-                                                      ipv6, &uncomp_hdr_len);
+                                                      ipv6, &uncomp_hdr_len,
+                                                      rbuf);
                 if (payload_offset == 0) {
                     _recv_error_release(sixlo, ipv6, rbuf);
                     return;
@@ -562,6 +561,37 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
 #endif
     uint16_t payload_len;
     if (rbuf != NULL) {
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+        /* only try minimal forwarding when the current fragment is the only
+         * fragment in reassembly buffer yet */
+        if ((rbuf->super.current_size <= sixlo->size) &&
+            /* and only when I am able to send fragmented datagrams */
+            (gnrc_sixlowpan_msg_frag_get() != NULL) &&
+            (vrbe = gnrc_sixlowpan_frag_minfwd_vrbe_from_route(
+                    ipv6->data, ipv6->size, ipv6->type,
+                    gnrc_netif_hdr_get_netif(netif_hdr), &rbuf->super
+                ))) {
+            /* add netif header to `ipv6` so its flags can be used in the
+             * forwarding step */
+            LL_DELETE(sixlo, netif);
+            LL_APPEND(ipv6, netif);
+            /* provide space to copy remaining payload */
+            if (gnrc_pktbuf_realloc_data(ipv6, uncomp_hdr_len + sixlo->size -
+                                         payload_offset) != 0) {
+                DEBUG("6lo iphc minfwd: no space left to copy payload\n");
+                gnrc_sixlowpan_frag_vrb_rm(vrbe);
+                _recv_error_release(sixlo, ipv6, rbuf);
+                return;
+            }
+        }
+        /* reallocate to copy complete payload */
+        else if (gnrc_pktbuf_realloc_data(ipv6,
+                                          rbuf->super.datagram_size) != 0) {
+            DEBUG("6lo iphc minfwd: no space left to reassemble payload\n");
+            _recv_error_release(sixlo, ipv6, rbuf);
+            return;
+        }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
         /* for a fragmented datagram we know the overall length already */
         payload_len = (uint16_t)(rbuf->super.datagram_size - sizeof(ipv6_hdr_t));
     }
@@ -572,6 +602,7 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
                        payload_offset - sizeof(ipv6_hdr_t));
     }
     if ((rbuf == NULL) &&
+        /* (rbuf == NULL) => forwarding is not affected by this */
         (gnrc_pktbuf_realloc_data(ipv6, uncomp_hdr_len + payload_len) != 0)) {
         DEBUG("6lo iphc: no space left to copy payload\n");
         _recv_error_release(sixlo, ipv6, rbuf);
@@ -584,6 +615,40 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
            ((uint8_t *)sixlo->data) + payload_offset,
            sixlo->size - payload_offset);
     if (rbuf != NULL) {
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+        if (vrbe != NULL) {
+            int res;
+
+            DEBUG("6lo iphc minfwd: found route, trying to forward\n");
+            if ((res = gnrc_sixlowpan_frag_minfwd_forward(
+                    vrbe, ipv6, uncomp_hdr_len - payload_offset, page
+                 )) == 0) {
+                DEBUG("6lo iphc minfwd: successfully forwarded 1st fragment\n");
+                /* successfully forwarded */
+                rbuf->super.ints = NULL; /* empty list, as it is in VRB now */
+                gnrc_sixlowpan_frag_rbuf_remove(rbuf);
+                gnrc_pktbuf_release(sixlo);
+                return;
+            }
+            else if (res != -ENOMEM) {
+                /* can't forward (but there is still memory space for sending),
+                 * so don't do it in 6Lo (and give the reassembled datagram in
+                 * IPv6 a chance) */
+                /* empty fragment list, as it is still in rbuf */
+                vrbe->super.ints = NULL;
+                gnrc_sixlowpan_frag_vrb_rm(vrbe);
+                if (gnrc_pktbuf_realloc_data(ipv6,
+                                             rbuf->super.datagram_size) != 0) {
+                    DEBUG("6lo iphc minfwd: no space left to allocate "
+                          "remaining payload\n");
+                    _recv_error_release(sixlo, ipv6, rbuf);
+                    return;
+                }
+            }
+        }
+        DEBUG("6lo iphc minfwd: no route found or can't fragment extra "
+              "datagrams right now, reassemble datagram normally\n");
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
         rbuf->super.current_size += (uncomp_hdr_len - payload_offset);
         gnrc_sixlowpan_frag_rbuf_dispatch_when_complete(rbuf, netif_hdr);
     }
