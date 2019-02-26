@@ -26,6 +26,9 @@
 #include "net/gnrc/sixlowpan.h"
 #include "net/gnrc/sixlowpan/ctx.h"
 #include "net/gnrc/sixlowpan/frag/rb.h"
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+#include "net/gnrc/sixlowpan/frag/minfwd.h"
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_VRB
 #include "net/gnrc/sixlowpan/frag/vrb.h"
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_VRB */
@@ -912,6 +915,12 @@ static int _forward_frag(gnrc_pktsnip_t *pkt, gnrc_pktsnip_t *frag_hdr,
     /* remove rewritten netif header (forwarding implementation must do this
      * anyway) */
     pkt = gnrc_pktbuf_remove_snip(pkt, pkt);
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+    if (sixlowpan_frag_is(frag_hdr->data)) {
+        return gnrc_sixlowpan_frag_minfwd_forward(pkt, frag_hdr->data, vrbe,
+                                                  page);
+    }
+#endif
     /* the following is just debug output for testing without any forwarding
      * scheme */
     DEBUG("6lo iphc: Do not know how to forward fragment from (%s, %u) ",
@@ -1606,9 +1615,22 @@ void gnrc_sixlowpan_iphc_send(gnrc_pktsnip_t *pkt, void *ctx, unsigned page)
     gnrc_pktsnip_t *tmp;
     /* datagram size before compression */
     size_t orig_datagram_size = gnrc_pkt_len(pkt->next);
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+    ipv6_hdr_t *ipv6_hdr = pkt->next->data;
+    ipv6_addr_t dst = ipv6_hdr->dst;    /* copying original destination
+                                         * address */
+#endif
 
     (void)ctx;
     if ((tmp = _iphc_encode(pkt, pkt->data, netif))) {
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+        if ((ctx != NULL) &&
+            (gnrc_sixlowpan_frag_minfwd_frag_iphc(tmp, orig_datagram_size, &dst,
+                                                  ctx) == 0)) {
+            DEBUG("6lo iphc minfwd: putting slack in first fragment\n");
+            return;
+        }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
         gnrc_sixlowpan_multiplex_by_size(tmp, orig_datagram_size, netif, page);
     }
     else {
