@@ -235,4 +235,37 @@ error_return:
     return res;
 }
 
+int gnrc_sixlowpan_frag_minfwd_frag_iphc(gnrc_pktsnip_t *pkt,
+                                         size_t orig_datagram_size,
+                                         const ipv6_addr_t *ipv6_dst,
+                                         gnrc_sixlowpan_msg_frag_t *frag_msg)
+{
+    gnrc_netif_t *netif;
+    int res = -1;
+
+    assert(frag_msg != NULL);
+    assert((pkt != NULL) && (pkt->type == GNRC_NETTYPE_NETIF));
+    assert((pkt->next != NULL) && (pkt->next->type == GNRC_NETTYPE_SIXLOWPAN));
+    netif = gnrc_netif_hdr_get_netif(pkt->data);
+
+    if (!ipv6_addr_is_link_local(ipv6_dst) &&
+        (frag_msg->datagram_size > netif->sixlo.max_frag_size)) {
+        frag_msg->pkt = pkt;    /* packet might have been rewritten */
+        /* put slack of IPHC in first fragment */
+        frag_msg->hint.fragsz = pkt->next->size;
+        frag_msg->hint.fragsz_uncomp = orig_datagram_size -
+                                       gnrc_pkt_len(pkt->next->next);
+        gnrc_sixlowpan_frag_send(NULL, frag_msg, 0);
+        res = 0;
+    }
+    else {
+        /* we don't forward link-local so free frag_msg again */
+        DEBUG("6lo minfwd: link-local address is not forwarded or "
+              "no fragmentation necessary (%u < %u)\n",
+              frag_msg->datagram_size, netif->sixlo.max_frag_size);
+        frag_msg->pkt = NULL;
+    }
+    return res;
+}
+
 /** @} */

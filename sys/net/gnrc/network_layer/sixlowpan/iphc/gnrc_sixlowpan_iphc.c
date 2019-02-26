@@ -25,6 +25,9 @@
 #include "net/gnrc/sixlowpan.h"
 #include "net/gnrc/sixlowpan/ctx.h"
 #include "net/gnrc/sixlowpan/frag.h"
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+#include "net/gnrc/sixlowpan/frag/minfwd.h"
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
 #include "net/gnrc/sixlowpan/internal.h"
 #include "net/sixlowpan.h"
 #include "utlist.h"
@@ -1036,6 +1039,14 @@ void gnrc_sixlowpan_iphc_send(gnrc_pktsnip_t *pkt, void *ctx, unsigned page)
     dispatch->next = pkt->next;
     pkt->next = dispatch;
 
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
+    if ((ctx != NULL) &&
+        (gnrc_sixlowpan_frag_minfwd_frag_iphc(pkt, orig_datagram_size,
+                                              &ipv6_hdr->dst, ctx) == 0)) {
+        DEBUG("6lo iphc minfwd: putting slack in first fragment\n");
+        return;
+    }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD */
     gnrc_netif_t *netif = gnrc_netif_hdr_get_netif(netif_hdr);
     assert(netif != NULL);
     gnrc_sixlowpan_multiplex_by_size(pkt, orig_datagram_size, netif, page);

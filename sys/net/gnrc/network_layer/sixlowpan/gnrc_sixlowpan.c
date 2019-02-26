@@ -292,10 +292,34 @@ static void _send(gnrc_pktsnip_t *pkt)
 
 #ifdef MODULE_GNRC_SIXLOWPAN_IPHC
     if (netif->flags & GNRC_NETIF_FLAGS_6LO_HC) {
-        gnrc_sixlowpan_iphc_send(pkt, NULL, 0);
+        gnrc_sixlowpan_msg_frag_t *fragment_msg;
+
+# if    defined(MODULE_GNRC_SIXLOWPAN_FRAG_HINT) && \
+        defined(MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD)
+        /* prepare for sending with IPHC slack in first fragment */
+        fragment_msg = gnrc_sixlowpan_msg_frag_get();
+        if (fragment_msg != NULL) {
+            fragment_msg->pkt = pkt;
+            fragment_msg->datagram_size = datagram_size;
+            fragment_msg->tag = gnrc_sixlowpan_frag_next_tag();
+            fragment_msg->offset = 0;
+            fragment_msg->hint.fragsz = 0;
+        }
+        else {
+            DEBUG("6lo: Not enough resources to fragment packet. "
+                  "Dropping packet\n");
+            gnrc_pktbuf_release(pkt);
+            return;
+        }
+# else  /* defined(MODULE_GNRC_SIXLOWPAN_FRAG_HINT) && \
+         * defined(MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD) */
+        fragment_msg = NULL;
+# endif /* defined(MODULE_GNRC_SIXLOWPAN_FRAG_HINT) && \
+         * defined(MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD) */
+        gnrc_sixlowpan_iphc_send(pkt, fragment_msg, 0);
         return;
     }
-#endif
+#endif      /* MODULE_GNRC_SIXLOWPAN_IPHC */
     if (!_add_uncompr_disp(pkt)) {
         /* adding uncompressed dispatch failed */
         DEBUG("6lo: no space left in packet buffer\n");
