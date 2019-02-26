@@ -10,5 +10,7 @@ USEMODULE += netdev_ieee802154
 USEMODULE += netdev_test
 
 CFLAGS += -DTEST_SUITES
+# disable router solicitations so they don't interfere with the tests
+CFLAGS += -DGNRC_IPV6_NIB_CONF_NO_RTR_SOL=1
 
 include $(RIOTBASE)/Makefile.include
