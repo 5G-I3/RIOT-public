@@ -1354,12 +1354,20 @@ void gnrc_netif_default_init(gnrc_netif_t *netif)
 static void _send(gnrc_netif_t *netif, gnrc_pktsnip_t *pkt, bool requeue);
 
 #ifdef MODULE_GNRC_NETIF_PKTQ
+static void _sched_dequeue(gnrc_netif_t *netif)
+{
+    netif->dequeue_msg.type = GNRC_NETIF_PKTQ_DEQUEUE_MSG;
+    xtimer_set_msg(&netif->dequeue_timer, GNRC_NETIF_PKTQ_TIMER_US,
+                   &netif->dequeue_msg, netif->pid);
+}
+
 static void _send_queued_pkt(gnrc_netif_t *netif)
 {
-    gnrc_pktsnip_t *pkt = gnrc_netif_pktq_get(netif);
+    gnrc_pktsnip_t *pkt;
 
-    if (pkt != NULL) {
+    if ((pkt = gnrc_netif_pktq_get(netif)) != NULL) {
         _send(netif, pkt, true);
+        _sched_dequeue(netif);
     }
 }
 #else   /* MODULE_GNRC_NETIF_PKTQ */
@@ -1406,6 +1414,7 @@ static void _send(gnrc_netif_t *netif, gnrc_pktsnip_t *pkt, bool requeue)
         }
         else {
             put_res = gnrc_netif_pktq_put(netif, pkt);
+            _sched_dequeue(netif);
         }
         if (put_res == 0) {
             DEBUG("gnrc_netif: (re-)queued pkt %p\n", (void *)pkt);
@@ -1482,6 +1491,12 @@ static void *_gnrc_netif_thread(void *args)
         msg_receive(&msg);
         /* dispatch netdev, MAC and gnrc_netapi messages */
         switch (msg.type) {
+#ifdef MODULE_GNRC_NETIF_PKTQ
+            case GNRC_NETIF_PKTQ_DEQUEUE_MSG:
+                DEBUG("gnrc_netif: send from packet send queue\n");
+                _send_queued_pkt(netif);
+                break;
+#endif
             case NETDEV_MSG_TYPE_EVENT:
                 DEBUG("gnrc_netif: GNRC_NETDEV_MSG_TYPE_EVENT received\n");
                 dev->driver->isr(dev);
