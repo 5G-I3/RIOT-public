@@ -1536,6 +1536,9 @@ static void _event_cb(netdev_t *dev, netdev_event_t event)
                 break;
 #endif
 #ifdef MODULE_NETSTATS_L2
+            case NETDEV_EVENT_TX_NOACK:
+                netif->stats.tx_retrans++;
+                break;
 #endif
 #if defined(MODULE_NETSTATS_L2) || defined(MODULE_GNRC_NETIF_PKTQ)
             case NETDEV_EVENT_TX_MEDIUM_BUSY:
