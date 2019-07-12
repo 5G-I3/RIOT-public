@@ -48,6 +48,9 @@ ifneq (,$(filter at86rf2%,$(USEMODULE)))
   USEMODULE += netif
   USEMODULE += ieee802154
   USEMODULE += netdev_ieee802154
+  ifneq (,$(filter gnrc_netif,$(USEMODULE)))
+    USEMODULE += gnrc_netif_pktq
+  endif
   FEATURES_REQUIRED += periph_gpio
   FEATURES_REQUIRED += periph_gpio_irq
   FEATURES_REQUIRED += periph_spi
