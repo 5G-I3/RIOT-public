@@ -659,6 +659,31 @@ static inline int gnrc_netif_ndp_addr_len_from_l2ao(gnrc_netif_t *netif,
 #endif  /* defined(MODULE_GNRC_IPV6) || defined(DOXYGEN) */
 /** @} */
 
+/**
+ * @brief   Checks if Selective Fragment Recovery
+ *
+ * @pre `netif != NULL`
+ *
+ * @param[in] netif A network interface. **Must** not be NULL.
+ *
+ * @return  true, if @p netif has Selective Fragment Recovery enabled.
+ * @return  false, if @p netif has Selective Fragment Recovery disabled.
+ */
+static inline bool gnrc_netif_6lo_srf_enabled(gnrc_netif_t *netif)
+{
+#if     defined(MODULE_GNRC_SIXLOWPAN_FRAG_SFR) && \
+        defined(MODULE_GNRC_SIXLOWPAN_FRAG)
+    assert(netif != NULL);
+    return netif->sixlo.local_flags & GNRC_NETIF_6LO_LOCAL_FLAGS_SFR;
+#elif   defined(MODULE_GNRC_SIXLOWPAN_FRAG_SFR)
+    (void)netif;    /* in case */
+    return true;
+#else
+    (void)netif;
+    return false;
+#endif
+}
+
 #ifdef __cplusplus
 }
 #endif
