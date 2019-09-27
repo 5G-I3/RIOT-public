@@ -28,6 +28,9 @@
 #ifdef MODULE_GNRC_NETIF_PKTQ
 #include "net/gnrc/netif/pktq.h"
 #endif
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+#include "net/gnrc/sixlowpan/frag/sfr.h"
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
 #ifdef MODULE_NETSTATS
 #include "net/netstats.h"
 #endif
@@ -1348,6 +1351,9 @@ void gnrc_netif_default_init(gnrc_netif_t *netif)
 #ifdef DEVELHELP
     _test_options(netif);
 #endif
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    gnrc_sixlowpan_frag_sfr_init_iface(netif);
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
     netif->cur_hl = CONFIG_GNRC_NETIF_DEFAULT_HL;
 #ifdef MODULE_GNRC_IPV6_NIB
     gnrc_ipv6_nib_init_iface(netif);

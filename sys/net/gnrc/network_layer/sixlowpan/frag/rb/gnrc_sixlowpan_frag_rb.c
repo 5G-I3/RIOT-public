@@ -22,6 +22,7 @@
 #include "net/gnrc.h"
 #include "net/gnrc/sixlowpan.h"
 #include "net/gnrc/sixlowpan/config.h"
+#include "net/sixlowpan/sfr.h"
 #ifdef  MODULE_GNRC_SIXLOWPAN_FRAG_STATS
 #include "net/gnrc/sixlowpan/frag/stats.h"
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_STATS */
@@ -201,9 +202,11 @@ static bool _valid_offset(gnrc_pktsnip_t *pkt, size_t offset)
              (offset == sixlowpan_frag_offset(pkt->data)));
 #endif
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    (void)offset;
     /* offset == 0 is an abort condition that should not be handed to the
      * reassembly buffer */
-    res = res || (sixlowpan_sfr_rfrag_is(pkt->data) && (offset != 0));
+    res = res || (sixlowpan_sfr_rfrag_is(pkt->data) &&
+                  (sixlowpan_sfr_rfrag_get_offset(pkt->data) != 0));
 #endif
     return res;
 }
@@ -260,6 +263,25 @@ static size_t _6lo_sfr_frag_size(gnrc_pktsnip_t *pkt)
 }
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
 
+#ifdef MODULE_GNRC_SIXLOWPAN_IPHC
+static gnrc_pktsnip_t *_mark_frag_hdr(gnrc_pktsnip_t *pkt)
+{
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    if (sixlowpan_sfr_rfrag_is(pkt->data)) {
+        return gnrc_pktbuf_mark(pkt, sizeof(sixlowpan_sfr_rfrag_t),
+                                GNRC_NETTYPE_SIXLOWPAN);
+    }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG */
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG
+    if (sixlowpan_frag_is(pkt->data)) {
+        return gnrc_pktbuf_mark(pkt, sizeof(sixlowpan_frag_t),
+                                GNRC_NETTYPE_SIXLOWPAN);
+    }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG */
+    return NULL;
+}
+#endif  /* MODULE_GNRC_SIXLOWPAN_IPHC */
+
 static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                      size_t offset, unsigned page)
 {
@@ -290,7 +312,7 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
 #endif
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
     if (sixlowpan_sfr_rfrag_is(pkt->data)) {
-        sixlowpan_sfr_rfrag_t *rfrag = pkt->data;;
+        sixlowpan_sfr_rfrag_t *rfrag = pkt->data;
 
         data = _6lo_sfr_payload(pkt);
         frag_size = _6lo_sfr_frag_size(pkt);
@@ -349,6 +371,9 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
         return RBUF_ADD_ERROR;
     }
     entry.rbuf = &rbuf[res];
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    offset += entry.rbuf->offset_diff;
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
     if ((offset + frag_size) > entry.super->datagram_size) {
         DEBUG("6lo rfrag: fragment too big for resulting datagram, discarding datagram\n");
         gnrc_pktbuf_release(entry.rbuf->pkt);
@@ -377,8 +402,8 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
 #ifdef MODULE_GNRC_SIXLOWPAN_IPHC
             if (sixlowpan_iphc_is(data)) {
                 DEBUG("6lo rbuf: detected IPHC header.\n");
-                gnrc_pktsnip_t *frag_hdr = gnrc_pktbuf_mark(pkt,
-                        sizeof(sixlowpan_frag_t), GNRC_NETTYPE_SIXLOWPAN);
+                gnrc_pktsnip_t *frag_hdr = _mark_frag_hdr(pkt);
+
                 if (frag_hdr == NULL) {
                     DEBUG("6lo rbuf: unable to mark fragment header. "
                           "aborting reassembly.\n");
@@ -433,9 +458,14 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                         return (res == 0) ? RBUF_ADD_SUCCESS : RBUF_ADD_ERROR;
                     }
                 }
+                if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_SFR) &&
+                    sixlowpan_sfr_rfrag_is(pkt->data)) {
+                    entry.super->datagram_size--;
+                }
             }
         }
-        if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD)) {
+        if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD) ||
+            IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_SFR)) {
             DEBUG("6lo rbuf: just do normal reassembly\n");
             if (gnrc_pktbuf_realloc_data(entry.rbuf->pkt,
                                          entry.super->datagram_size) != 0) {
@@ -578,8 +608,15 @@ static int _rbuf_get(const void *src, size_t src_len,
 
     for (unsigned int i = 0; i < CONFIG_GNRC_SIXLOWPAN_FRAG_RBUF_SIZE; i++) {
         /* check first if entry already available */
-        if ((rbuf[i].pkt != NULL) && (rbuf[i].super.datagram_size == size) &&
-            (rbuf[i].super.tag == tag) && (rbuf[i].super.src_len == src_len) &&
+        if ((rbuf[i].pkt != NULL) && (rbuf[i].super.tag == tag) &&
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+            /* not all SFR fragments carry the datagram size, so make 0 a legal
+             * value to not compare datagram size */
+            ((size == 0) || (rbuf[i].super.datagram_size == size)) &&
+#else  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
+            (rbuf[i].super.datagram_size == size) &&
+#endif /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
+            (rbuf[i].super.src_len == src_len) &&
             (rbuf[i].super.dst_len == dst_len) &&
             (memcmp(rbuf[i].super.src, src, src_len) == 0) &&
             (memcmp(rbuf[i].super.dst, dst, dst_len) == 0)) {
@@ -685,6 +722,10 @@ static int _rbuf_get(const void *src, size_t src_len,
     res->super.dst_len = dst_len;
     res->super.tag = tag;
     res->super.current_size = 0;
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    res->offset_diff = 0U;
+    memset(res->received, 0U, sizeof(res->received));
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
 
     DEBUG("6lo rfrag: entry %p (%s, ", (void *)res,
           gnrc_netif_addr_to_str(res->super.src, res->super.src_len,
