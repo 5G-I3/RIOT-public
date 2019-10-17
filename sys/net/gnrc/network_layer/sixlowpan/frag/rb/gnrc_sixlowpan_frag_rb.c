@@ -194,12 +194,22 @@ static gnrc_sixlowpan_frag_rb_t *_rbuf_get_by_tag(const gnrc_netif_hdr_t *netif_
 #ifndef NDEBUG
 static bool _valid_offset(gnrc_pktsnip_t *pkt, size_t offset)
 {
-    return (sixlowpan_frag_1_is(pkt->data) && (offset == 0)) ||
-           (sixlowpan_frag_n_is(pkt->data) &&
-            (offset == sixlowpan_frag_offset(pkt->data)));
+    bool res = false;
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG
+    res = res || (sixlowpan_frag_1_is(pkt->data) && (offset == 0)) ||
+          (sixlowpan_frag_n_is(pkt->data) &&
+             (offset == sixlowpan_frag_offset(pkt->data)));
+#endif
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    /* offset == 0 is an abort condition that should not be handed to the
+     * reassembly buffer */
+    res = res || (sixlowpan_sfr_rfrag_is(pkt->data) && (offset != 0));
+#endif
+    return res;
 }
 #endif
 
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG
 static uint8_t *_6lo_frag_payload(gnrc_pktsnip_t *pkt)
 {
     if (sixlowpan_frag_1_is(pkt->data)) {
@@ -227,6 +237,28 @@ static size_t _6lo_frag_size(gnrc_pktsnip_t *pkt, size_t offset, uint8_t *data)
     }
     return frag_size;
 }
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG */
+
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+static uint16_t _6lo_sfr_datagram_size(gnrc_pktsnip_t *pkt, size_t offset)
+{
+    /* offset doubles as datagram size in RFRAG header when sequence number is 0
+     * see https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-08#section-5.1 */
+    return (offset == 0) ? sixlowpan_sfr_rfrag_get_offset(pkt->data) : 0;
+}
+
+static uint8_t *_6lo_sfr_payload(gnrc_pktsnip_t *pkt)
+{
+    return ((uint8_t *)pkt->data) + sizeof(sixlowpan_sfr_rfrag_t);
+}
+
+static size_t _6lo_sfr_frag_size(gnrc_pktsnip_t *pkt)
+{
+    /* TODO: if necessary check MAC layer here,
+     * see https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-08#section-5.1 */
+    return sixlowpan_sfr_rfrag_get_frag_size(pkt->data);
+}
+#endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_SFR */
 
 static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                      size_t offset, unsigned page)
@@ -240,7 +272,7 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
     } entry;
     const uint8_t *src = gnrc_netif_hdr_get_src_addr(netif_hdr);
     const uint8_t *dst = gnrc_netif_hdr_get_dst_addr(netif_hdr);
-    uint8_t *data;
+    uint8_t *data = NULL;
     size_t frag_size;
     int res;
     uint16_t datagram_size;
@@ -248,10 +280,28 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
 
     /* check if provided offset is the same as in fragment */
     assert(_valid_offset(pkt, offset));
-    data = _6lo_frag_payload(pkt);
-    frag_size = _6lo_frag_size(pkt, offset, data);
-    datagram_size = sixlowpan_frag_datagram_size(pkt->data);
-    datagram_tag = sixlowpan_frag_datagram_tag(pkt->data);
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG
+    if (sixlowpan_frag_is(pkt->data)) {
+        data = _6lo_frag_payload(pkt);
+        frag_size = _6lo_frag_size(pkt, offset, data);
+        datagram_size = sixlowpan_frag_datagram_size(pkt->data);
+        datagram_tag = sixlowpan_frag_datagram_tag(pkt->data);
+    }
+#endif
+#ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
+    if (sixlowpan_sfr_rfrag_is(pkt->data)) {
+        sixlowpan_sfr_rfrag_t *rfrag = pkt->data;;
+
+        data = _6lo_sfr_payload(pkt);
+        frag_size = _6lo_sfr_frag_size(pkt);
+        /* offset doubles as datagram size in RFRAG header when sequence number
+         * is 0 */
+        datagram_size = _6lo_sfr_datagram_size(pkt, offset);
+        datagram_tag = rfrag->base.tag;
+    }
+#endif
+    /* either one of the if branches above was taken */
+    assert(data != NULL);
 
     gnrc_sixlowpan_frag_rb_gc();
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_MINFWD
