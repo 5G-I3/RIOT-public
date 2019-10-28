@@ -57,8 +57,8 @@ extern "C" {
 /**
  * @brief   Generic type for selective fragment recovery headers
  *
- * @see [draft-ietf-6lo-fragment-recovery-05, section
- *      5](https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-05#section-5)
+ * @see [draft-ietf-6lo-fragment-recovery-07, section
+ *      5](https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-07#section-5)
  */
 typedef struct __attribute__((packed)) {
     /**
@@ -92,8 +92,8 @@ typedef struct __attribute__((packed)) {
 /**
  * @brief   Recoverable fragment header
  *
- * @see [draft-ietf-6lo-fragment-recovery-05, section
- *      5.1](https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-05#section-5.1)
+ * @see [draft-ietf-6lo-fragment-recovery-07, section
+ *      5.1](https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-07#section-5.1)
  */
 typedef struct __attribute__((packed)) {
     sixlowpan_sfr_t base;   /**< generic part */
@@ -137,8 +137,8 @@ typedef struct __attribute__((packed)) {
 /**
  * @brief   Recoverable fragment (RFRAG) acknowledgment header
  *
- * @see [draft-ietf-6lo-fragment-recovery-05, section
- *      5.2](https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-05#section-5.2)
+ * @see [draft-ietf-6lo-fragment-recovery-07, section
+ *      5.2](https://tools.ietf.org/html/draft-ietf-6lo-fragment-recovery-07#section-5.2)
  */
 typedef struct __attribute__((packed)) {
     sixlowpan_sfr_t base;   /**< generic part */
