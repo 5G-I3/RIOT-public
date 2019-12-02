@@ -251,6 +251,25 @@ static inline void gnrc_sixlowpan_frag_rb_remove(gnrc_sixlowpan_frag_rb_t *rbuf)
 }
 #endif
 
+#if defined(TEST_SUITES) || defined(DOXYGEN)
+/**
+ * @brief   Check if pool of fragment intervals is empty
+ *
+ * @see     @ref gnrc_sixlowpan_frag_rb_int_t
+ * @note    Returns only non-true values if @ref TEST_SUITES is defined.
+ *
+ * @return  true, if pool of fragment intervals is empty
+ * @return  false, if pool of fragment intervals is not empty
+ */
+bool gnrc_sixlowpan_frag_rb_ints_empty(void);
+#else   /* defined(TEST_SUITES) || defined(DOXYGEN) */
+/* always true without TEST_SUITES defined */
+static inline bool gnrc_sixlowpan_frag_rb_ints_empty(void)
+{
+    return true;
+}
+#endif  /* defined(TEST_SUITES) || defined(DOXYGEN) */
+
 #ifdef __cplusplus
 }
 #endif
