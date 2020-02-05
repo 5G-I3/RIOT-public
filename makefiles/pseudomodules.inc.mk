@@ -15,6 +15,7 @@ PSEUDOMODULES += emb6_router
 PSEUDOMODULES += event_%
 PSEUDOMODULES += fmt_%
 PSEUDOMODULES += gnrc_ipv6_default
+PSEUDOMODULES += gnrc_ipv6_ext_frag_stats
 PSEUDOMODULES += gnrc_ipv6_router
 PSEUDOMODULES += gnrc_ipv6_router_default
 PSEUDOMODULES += gnrc_ipv6_nib_6lbr

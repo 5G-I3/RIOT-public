@@ -90,6 +90,10 @@ extern int _gnrc_netif_send(int argc, char **argv);
 extern int _fib_route_handler(int argc, char **argv);
 #endif
 
+#ifdef MODULE_GNRC_IPV6_EXT_FRAG_STATS
+extern int _gnrc_ipv6_frag_stats(int argc, char **argv);
+#endif
+
 #ifdef MODULE_GNRC_IPV6_NC
 extern int _ipv6_nc_manage(int argc, char **argv);
 extern int _ipv6_nc_routers(int argc, char **argv);
@@ -220,6 +224,9 @@ const shell_command_t _shell_command_list[] = {
 #endif
 #ifdef MODULE_FIB
     {"fibroute", "Manipulate the FIB (info: 'fibroute [add|del]')", _fib_route_handler},
+#endif
+#ifdef MODULE_GNRC_IPV6_EXT_FRAG_STATS
+    {"ip6_frag", "IPv6 fragmentation statistics", _gnrc_ipv6_frag_stats },
 #endif
 #ifdef MODULE_GNRC_IPV6_WHITELIST
     {"whitelist", "whitelists an address for receival ('whitelist [add|del|help]')", _whitelist },
