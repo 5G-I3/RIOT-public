@@ -31,6 +31,8 @@ int _gnrc_6lo_frag_stats(int argc, char **argv)
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_VRB
     printf("VRB full: %u\n", stats->vrb_full);
 #endif
+    printf("frags complete: %u\n", stats->fragments);
+    printf("dgs complete: %u\n", stats->datagrams);
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR_STATS
     gnrc_sixlowpan_frag_sfr_stats_t sfr;
 
