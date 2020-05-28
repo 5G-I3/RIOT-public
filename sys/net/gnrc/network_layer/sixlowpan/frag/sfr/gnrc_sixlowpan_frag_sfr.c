@@ -999,7 +999,6 @@ static void _handle_1st_rfrag(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
             release_pkt = false;
         }
         if (gnrc_sixlowpan_frag_rb_exists(netif_hdr, hdr->base.tag)) {
-            gnrc_sixlowpan_frag_rb_rm_by_datagram(netif_hdr, hdr->base.tag);
             send_ack = sixlowpan_sfr_rfrag_ack_req(hdr);
             _abort_rb(pkt, entry, netif_hdr, send_ack);
             release_pkt = false;
