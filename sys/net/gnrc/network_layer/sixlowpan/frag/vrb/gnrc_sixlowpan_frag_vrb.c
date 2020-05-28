@@ -19,9 +19,11 @@
 #include "net/gnrc/ipv6/nib.h"
 #endif  /* MODULE_GNRC_IPV6_NIB */
 #ifdef MODULE_GNRC_ICNLOWPAN_HC
+#include "ccn-lite-riot.h"
 #include "ccnl-defs.h"
 #include "ccnl-pkt-ndntlv.h"
 #include "ccnl-pkt-util.h"
+#undef DEBUG
 #endif
 #include "net/gnrc/netif.h"
 #include "xtimer.h"
@@ -182,11 +184,74 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
             }
             pkt->type = type;
             switch (type) {
-                case NDN_TLV_Interest:
-                    /* get from FIB */
-                case NDN_TLV_Data:
-                    /* get from PIT */
+                case NDN_TLV_Interest: {
+                    struct ccnl_forward_s *fwd;
+
+                    for (fwd = ccnl_relay.fib; fwd; fwd = fwd->next) {
+                        int rc;
+
+                        if (!fwd->prefix) {
+                            continue;
+                        }
+                        if (!pkt->pfx || fwd->suite != pkt->pfx->suite) {
+                            DEBUG("6lo vrb: not same CCN-lite suite (%d/%d)\n",
+                                  fwd->suite, pkt->pfx ? pkt->pfx->suite : -1);
+                            continue;
+                        }
+                        rc = ccnl_prefix_cmp(fwd->prefix, NULL, pkt->pfx,
+                                             CMP_LONGEST);
+
+                        DEBUG("6lo vrb: rc=%ld/%ld\n", (long)rc,
+                              (long)fwd->prefix->compcnt);
+                        if (rc < (signed)fwd->prefix->compcnt) {
+                            continue;
+                        }
+                        DEBUG("6lo vrb: FIB entry for prefix %s found\n",
+                              ccnl_prefix_to_str(pkt->pfx,
+                                                 addr_str, sizeof(addr_str)));
+                        assert(fwd->face->peer.sa.sa_family == AF_PACKET);
+                        res = gnrc_sixlowpan_frag_vrb_add(
+                                base,
+                                gnrc_netif_get_by_pid(ccnl_relay.ifs[0].if_pid),
+                                fwd->face->peer.linklayer.sll_addr,
+                                fwd->face->peer.linklayer.sll_halen
+                            );
+                        break;
+                    }
                     break;
+                }
+                case NDN_TLV_Data: {
+                    struct ccnl_interest_s *i;
+
+                    for (i = ccnl_relay.pit; i; i = i->next) {
+                        struct ccnl_pendint_s *pi;
+
+                        /* TODO: CCNL_FACE_FLAGS_SERVED stuff?
+                         *       see ccnl_content_serve_pending() */
+                        if (!i->pkt->pfx) {
+                            continue;
+                        }
+                        /* XXX or rather ccnl_i_prefixof_c()? */
+                        if (ccnl_prefix_cmp(i->pkt->pfx, NULL,
+                                            pkt->pfx, CMP_EXACT) < 0) {
+                            // XX must also check i->ppkl,
+                            continue;
+                        }
+                        for (pi = i->pending; pi; pi = pi->next) {
+                            if (pi->face->ifndx >= 0) {
+                                kernel_pid_t if_pid = ccnl_relay.ifs[0].if_pid;
+                                assert(pi->face->peer.sa.sa_family == AF_PACKET);
+                                res = gnrc_sixlowpan_frag_vrb_add(
+                                        base,
+                                        gnrc_netif_get_by_pid(if_pid),
+                                        pi->face->peer.linklayer.sll_addr,
+                                        pi->face->peer.linklayer.sll_halen
+                                    );
+                            }
+                        }
+                    }
+                    break;
+                }
                 default:
                     DEBUG("6lo vrb: Do not know how forward packet type %u\n",
                           *data);

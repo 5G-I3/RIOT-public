@@ -1215,6 +1215,11 @@ static uint16_t _send_1st_fragment(gnrc_netif_t *netif,
         /* use compressed form */
         fbuf->datagram_size = (uint16_t)gnrc_pkt_len(pkt->next);
     }
+#if IS_USED(MODULE_CCN_LITE)
+    else if (pkt->next->type == GNRC_NETTYPE_CCN) {
+        /* do nothing for now */
+    }
+#endif
     else {
         /* Add uncompressed datagram dispatch to "compressed form"
          * datagram_size */
