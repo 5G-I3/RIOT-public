@@ -968,7 +968,7 @@ static void _forward_uncomp(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
     entry->entry.vrb->in_netif = gnrc_netif_hdr_get_netif(netif_hdr);
     entry->entry.vrb->offset_diff = 0; /* packet is uncompressed so offset
                                         * does not change */
-    _forward_rfrag(pkt, entry, 0, page);
+    _forward_rfrag(pkt, entry, sixlowpan_sfr_rfrag_get_offset(hdr), page);
 }
 
 static void _handle_1st_rfrag(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
