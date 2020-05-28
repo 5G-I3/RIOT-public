@@ -936,6 +936,13 @@ static void _forward_uncomp(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
             break;
         }
 #endif
+#if IS_USED(MODULE_GNRC_ICNLOWPAN_HC)
+        case 2: {
+            tmp.type = GNRC_NETTYPE_CCN;
+            tmp.size++;
+            break;
+        }
+#endif
         default:
             tmp.type = GNRC_NETTYPE_UNDEF;
             break;
@@ -961,6 +968,7 @@ static void _forward_uncomp(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
             break;
         }
 #endif
+        /* TODO NDN? */
         default:
             break;
     }
@@ -1016,7 +1024,11 @@ static void _handle_1st_rfrag(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
           hdr->base.tag);
 
     payload = (uint8_t *)(hdr + 1);
-    if (payload[0] == SIXLOWPAN_UNCOMP) {
+    if (IS_USED(MODULE_GNRC_ICNLOWPAN_HC)) {
+        /* TODO: parse payload for ICNLoWPAN */
+        _forward_uncomp(netif_hdr, pkt, 2, entry, payload);
+    }
+    else if ((payload[0] == SIXLOWPAN_UNCOMP)) {
         _forward_uncomp(netif_hdr, pkt, page, entry, payload + 1);
     }
     else {

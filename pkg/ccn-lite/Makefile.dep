@@ -4,3 +4,6 @@ USEMODULE += random
 USEMODULE += timex
 USEMODULE += posix_headers
 USEPKG += libicnl
+ifneq (,$(filter gnrc_sixlowpan_frag_sfr,$(USEMODULE)))
+  CFLAGS += -DUSE_TENTATIVE_CACHE
+endif

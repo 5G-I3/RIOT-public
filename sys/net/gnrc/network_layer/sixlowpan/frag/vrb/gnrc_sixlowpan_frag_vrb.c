@@ -127,6 +127,40 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_add(
     return vrbe;
 }
 
+#ifdef MODULE_GNRC_ICNLOWPAN_HC
+static struct ccnl_pkt_s *_preparse_ndn(const gnrc_pktsnip_t *pkt,
+                                        uint64_t *pkt_type)
+{
+    struct ccnl_pkt_s *ccnl_pkt = NULL;
+    uint8_t *start = pkt->data, *data = pkt->data;
+    size_t size = pkt->size, field_len;
+
+    /* XXX cannot use ccnl_ndntlv_dehead() and ccnl_ndntlv_bytes2pkt() as it
+     * checks the length field against the actual length, so do it by hand */
+    if ((ccnl_ndntlv_dehead_soft(&data, &size, pkt_type, &field_len) < 0) ||
+        (((int)pkt->size - size) <= 0)) {
+        DEBUG("6lo vrb NDN: unable to dehead packet\n");
+        return NULL;
+    }
+    if (ccnl_ndntlv_bytes2pkt_partial(*pkt_type, start, data, size,
+                                      &ccnl_pkt, 0, size) < 0) {
+        DEBUG("6lo vrb NDN: no prefix found in packet\n");
+        return NULL;
+    }
+    else if (ccnl_pkt) {
+        if (ccnl_pkt->pfx) {
+            return ccnl_pkt;
+        }
+        DEBUG("6lo vrb NDN: parsable packet, but name incomplete\n")
+        ccnl_pkt_free(ccnl_pkt);
+        return NULL;
+    }
+    DEBUG("6lo vrb NDN: packet not parsable\n");
+    return NULL;
+}
+#endif
+
+
 gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
             const gnrc_sixlowpan_frag_rb_base_t *base,
             gnrc_netif_t *netif, const gnrc_pktsnip_t *hdr)
@@ -167,22 +201,16 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
             assert((ccnl_pkt2suite(hdr->data, hdr->size, NULL)
                     == CCNL_SUITE_NDNTLV) && (hdr->size > 1));
             uint64_t type;
-            struct ccnl_pkt_s *pkt;
-            uint8_t *data = hdr->data;
-            uint8_t *start = data;
-            size_t len, data_len = hdr->size;
+            struct ccnl_pkt_s *ccnl_pkt;
 
-            if (ccnl_ndntlv_dehead(&data, &data_len, &type, &len) ||
-                (len > data_len)) {
-                DEBUG("6lo vrb: Invalid NDN packet format\n");
+            ccnl_pkt = _preparse_ndn(hdr, &type);
+            if (!ccnl_pkt) {
+                DEBUG("6lo vrb: unable to find NDN prefix\n");
                 break;
             }
-            pkt = ccnl_ndntlv_bytes2pkt(type, start, &data, &data_len);
-            if (!pkt) {
-                DEBUG("6lo vrb: ndntlv packet coding problem\n");
-                break;
-            }
-            pkt->type = type;
+            DEBUG("6lo vrb: Found prefix %s in packet\n",
+                  ccnl_prefix_to_str(ccnl_pkt->pfx, addr_str,
+                                     sizeof(addr_str)));
             switch (type) {
                 case NDN_TLV_Interest: {
                     struct ccnl_forward_s *fwd;
@@ -193,12 +221,7 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
                         if (!fwd->prefix) {
                             continue;
                         }
-                        if (!pkt->pfx || fwd->suite != pkt->pfx->suite) {
-                            DEBUG("6lo vrb: not same CCN-lite suite (%d/%d)\n",
-                                  fwd->suite, pkt->pfx ? pkt->pfx->suite : -1);
-                            continue;
-                        }
-                        rc = ccnl_prefix_cmp(fwd->prefix, NULL, pkt->pfx,
+                        rc = ccnl_prefix_cmp(fwd->prefix, NULL, ccnl_pkt->pfx,
                                              CMP_LONGEST);
 
                         DEBUG("6lo vrb: rc=%ld/%ld\n", (long)rc,
@@ -207,7 +230,7 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
                             continue;
                         }
                         DEBUG("6lo vrb: FIB entry for prefix %s found\n",
-                              ccnl_prefix_to_str(pkt->pfx,
+                              ccnl_prefix_to_str(ccnl_pkt->pfx,
                                                  addr_str, sizeof(addr_str)));
                         assert(fwd->face->peer.sa.sa_family == AF_PACKET);
                         res = gnrc_sixlowpan_frag_vrb_add(
@@ -228,18 +251,18 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
 
                         /* TODO: CCNL_FACE_FLAGS_SERVED stuff?
                          *       see ccnl_content_serve_pending() */
-                        if (!i->pkt->pfx) {
-                            continue;
-                        }
                         /* XXX or rather ccnl_i_prefixof_c()? */
-                        if (ccnl_prefix_cmp(i->pkt->pfx, NULL,
-                                            pkt->pfx, CMP_EXACT) < 0) {
+                        if (ccnl_prefix_cmp(i->pkt->pfx, NULL, ccnl_pkt->pfx,
+                                            CMP_EXACT) < 0) {
                             // XX must also check i->ppkl,
                             continue;
                         }
                         for (pi = i->pending; pi; pi = pi->next) {
                             if (pi->face->ifndx >= 0) {
                                 kernel_pid_t if_pid = ccnl_relay.ifs[0].if_pid;
+                                DEBUG("6lo vrb: PIT entry for prefix %s found\n",
+                                      ccnl_prefix_to_str(ccnl_pkt->pfx, addr_str,
+                                                         sizeof(addr_str)));
                                 assert(pi->face->peer.sa.sa_family == AF_PACKET);
                                 res = gnrc_sixlowpan_frag_vrb_add(
                                         base,
@@ -247,6 +270,7 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
                                         pi->face->peer.linklayer.sll_addr,
                                         pi->face->peer.linklayer.sll_halen
                                     );
+                                break;
                             }
                         }
                     }
@@ -254,10 +278,10 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
                 }
                 default:
                     DEBUG("6lo vrb: Do not know how forward packet type %u\n",
-                          *data);
+                          (unsigned)type);
                     break;
             }
-            ccnl_pkt_free(pkt);
+            ccnl_pkt_free(ccnl_pkt);
             break;
         }
 #endif
