@@ -18,6 +18,11 @@
 #include "net/ipv6/addr.h"
 #include "net/gnrc/ipv6/nib.h"
 #endif  /* MODULE_GNRC_IPV6_NIB */
+#ifdef MODULE_GNRC_ICNLOWPAN_HC
+#include "ccnl-defs.h"
+#include "ccnl-pkt-ndntlv.h"
+#include "ccnl-pkt-util.h"
+#endif
 #include "net/gnrc/netif.h"
 #include "xtimer.h"
 
@@ -155,6 +160,42 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
             break;
         }
 #endif  /* MODULE_GNRC_IPV6_NIB */
+#ifdef MODULE_GNRC_ICNLOWPAN_HC
+        case GNRC_NETTYPE_CCN: {
+            assert((ccnl_pkt2suite(hdr->data, hdr->size, NULL)
+                    == CCNL_SUITE_NDNTLV) && (hdr->size > 1));
+            uint64_t type;
+            struct ccnl_pkt_s *pkt;
+            uint8_t *data = hdr->data;
+            uint8_t *start = data;
+            size_t len, data_len = hdr->size;
+
+            if (ccnl_ndntlv_dehead(&data, &data_len, &type, &len) ||
+                (len > data_len)) {
+                DEBUG("6lo vrb: Invalid NDN packet format\n");
+                break;
+            }
+            pkt = ccnl_ndntlv_bytes2pkt(type, start, &data, &data_len);
+            if (!pkt) {
+                DEBUG("6lo vrb: ndntlv packet coding problem\n");
+                break;
+            }
+            pkt->type = type;
+            switch (type) {
+                case NDN_TLV_Interest:
+                    /* get from FIB */
+                case NDN_TLV_Data:
+                    /* get from PIT */
+                    break;
+                default:
+                    DEBUG("6lo vrb: Do not know how forward packet type %u\n",
+                          *data);
+                    break;
+            }
+            ccnl_pkt_free(pkt);
+            break;
+        }
+#endif
         default:
             (void)base;
             (void)netif;
