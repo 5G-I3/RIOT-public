@@ -500,7 +500,7 @@ void gnrc_sixlowpan_frag_rb_gc(void)
 #endif
 }
 
-static inline void _set_rbuf_timeout(void)
+void gnrc_sixlowpan_frag_rb_set_gc_timeout(void)
 {
     xtimer_set_msg(&_gc_timer, CONFIG_GNRC_SIXLOWPAN_FRAG_RBUF_TIMEOUT_US,
                    &_gc_timer_msg, sched_active_pid);
@@ -546,7 +546,7 @@ static int _rbuf_get(const void *src, size_t src_len,
             }
 #endif
             rbuf[i].super.arrival = now_usec;
-            _set_rbuf_timeout();
+            gnrc_sixlowpan_frag_rb_set_gc_timeout();
             return i;
         }
 
@@ -642,7 +642,7 @@ static int _rbuf_get(const void *src, size_t src_len,
                                  l2addr_str), res->super.datagram_size,
           res->super.tag);
 
-    _set_rbuf_timeout();
+    gnrc_sixlowpan_frag_rb_set_gc_timeout();
 
     return res - &(rbuf[0]);
 }

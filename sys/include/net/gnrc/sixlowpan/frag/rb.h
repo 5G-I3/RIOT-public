@@ -216,6 +216,8 @@ void gnrc_sixlowpan_frag_rb_base_rm(gnrc_sixlowpan_frag_rb_base_t *entry);
  */
 void gnrc_sixlowpan_frag_rb_gc(void);
 
+void gnrc_sixlowpan_frag_rb_set_gc_timeout(void);
+
 /**
  * @brief   Checks if a reassembly buffer entry is complete and dispatches it
  *          to the next layer if that is the case
