@@ -70,9 +70,6 @@ static inline bool _rbuf_int_overlap_partially(gnrc_sixlowpan_frag_rb_int_t *i,
                                                uint16_t start, uint16_t end);
 /* gets a free entry from interval buffer */
 static gnrc_sixlowpan_frag_rb_int_t *_rbuf_int_get_free(void);
-/* update interval buffer of entry */
-static bool _rbuf_update_ints(gnrc_sixlowpan_frag_rb_base_t *entry,
-                              uint16_t offset, size_t frag_size);
 /* gets an entry identified by its tuple */
 static int _rbuf_get(const void *src, size_t src_len,
                      const void *dst, size_t dst_len,
@@ -85,16 +82,8 @@ static gnrc_sixlowpan_frag_rb_t *_rbuf_get_by_tag(const gnrc_netif_hdr_t *netif_
 static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                      size_t offset, unsigned page);
 
-/* status codes for _rbuf_add() */
-enum {
-    RBUF_ADD_SUCCESS = 0,
-    RBUF_ADD_ERROR = -1,
-    RBUF_ADD_REPEAT = -2,
-    RBUF_ADD_DUPLICATE = -3,
-};
-
-static int _check_fragments(gnrc_sixlowpan_frag_rb_base_t *entry,
-                            size_t frag_size, size_t offset)
+int gnrc_sixlowpan_frag_rb_int_check(gnrc_sixlowpan_frag_rb_base_t *entry,
+                                     size_t offset, size_t frag_size)
 {
     gnrc_sixlowpan_frag_rb_int_t *ptr = entry->ints;
 
@@ -275,6 +264,7 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                      size_t offset, unsigned page)
 {
     gnrc_sixlowpan_frag_rb_t *entry;
+    gnrc_sixlowpan_frag_rb_int_t *interval;
     uint8_t *data = NULL;
     size_t frag_size;
     int res;
@@ -328,7 +318,8 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
         return RBUF_ADD_ERROR;
     }
 
-    switch (_check_fragments(&entry->super, frag_size, offset)) {
+    switch (gnrc_sixlowpan_frag_rb_int_check(&entry->super, offset,
+                                             frag_size)) {
         case RBUF_ADD_REPEAT:
             DEBUG("6lo rfrag: overlapping intervals, discarding datagram\n");
             gnrc_pktbuf_release(entry->pkt);
@@ -341,7 +332,8 @@ static int _rbuf_add(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
             break;
     }
 
-    if (_rbuf_update_ints(&entry->super, offset, frag_size)) {
+    if ((interval = gnrc_sixlowpan_frag_rb_int_update(&entry->super, offset,
+                                                      frag_size))) {
         DEBUG("6lo rbuf: add fragment data\n");
         entry->super.current_size += (uint16_t)frag_size;
         if (offset == 0) {
@@ -436,8 +428,9 @@ bool gnrc_sixlowpan_frag_rb_ints_empty(void)
 }
 #endif  /* TEST_SUITES */
 
-static bool _rbuf_update_ints(gnrc_sixlowpan_frag_rb_base_t *entry,
-                              uint16_t offset, size_t frag_size)
+gnrc_sixlowpan_frag_rb_int_t *gnrc_sixlowpan_frag_rb_int_update(
+        gnrc_sixlowpan_frag_rb_base_t *entry,
+        uint16_t offset, size_t frag_size)
 {
     gnrc_sixlowpan_frag_rb_int_t *new;
     uint16_t end = (uint16_t)(offset + frag_size - 1);
@@ -446,7 +439,7 @@ static bool _rbuf_update_ints(gnrc_sixlowpan_frag_rb_base_t *entry,
 
     if (new == NULL) {
         DEBUG("6lo rfrag: no space left in rbuf interval buffer.\n");
-        return false;
+        return NULL;
     }
 
     new->start = offset;
@@ -463,7 +456,7 @@ static bool _rbuf_update_ints(gnrc_sixlowpan_frag_rb_base_t *entry,
 
     LL_PREPEND(entry->ints, new);
 
-    return true;
+    return new;
 }
 
 static void _gc_pkt(gnrc_sixlowpan_frag_rb_t *rbuf)

@@ -265,6 +265,21 @@ static inline void gnrc_sixlowpan_frag_rb_remove(gnrc_sixlowpan_frag_rb_t *rbuf)
 }
 #endif
 
+/* status codes for _rbuf_add() */
+enum {
+    RBUF_ADD_SUCCESS = 0,
+    RBUF_ADD_ERROR = -1,
+    RBUF_ADD_REPEAT = -2,
+    RBUF_ADD_DUPLICATE = -3,
+};
+
+int gnrc_sixlowpan_frag_rb_int_check(gnrc_sixlowpan_frag_rb_base_t *entry,
+                                     size_t offset, size_t frag_size);
+
+gnrc_sixlowpan_frag_rb_int_t *gnrc_sixlowpan_frag_rb_int_update(
+        gnrc_sixlowpan_frag_rb_base_t *entry,
+        uint16_t offset, size_t frag_size);
+
 #if defined(TEST_SUITES) || defined(DOXYGEN)
 /**
  * @brief   Check if pool of fragment intervals is empty
