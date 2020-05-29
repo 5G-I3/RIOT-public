@@ -33,6 +33,7 @@
 #include "net/gnrc/sixlowpan/frag/stats.h"
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_STATS */
 #include "net/gnrc/sixlowpan/frag/vrb.h"
+#include "net/gnrc/sixlowpan/frag/vrep.h"
 
 #define ENABLE_DEBUG    (0)
 #include "debug.h"
@@ -76,6 +77,9 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_add(
                 memcpy(vrbe->super.dst, out_dst, out_dst_len);
                 vrbe->out_tag = gnrc_sixlowpan_frag_fb_next_tag();
                 vrbe->super.dst_len = out_dst_len;
+#if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+                vrbe->store = NULL;
+#endif
                 DEBUG("6lo vrb: creating entry (%s, ",
                       gnrc_netif_addr_to_str(vrbe->super.src,
                                              vrbe->super.src_len,
@@ -129,7 +133,8 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_add(
 
 #ifdef MODULE_GNRC_ICNLOWPAN_HC
 static struct ccnl_pkt_s *_preparse_ndn(const gnrc_pktsnip_t *pkt,
-                                        uint64_t *pkt_type)
+                                        uint64_t *pkt_type,
+                                        size_t datagram_size)
 {
     struct ccnl_pkt_s *ccnl_pkt = NULL;
     uint8_t *start = pkt->data, *data = pkt->data;
@@ -143,15 +148,16 @@ static struct ccnl_pkt_s *_preparse_ndn(const gnrc_pktsnip_t *pkt,
         return NULL;
     }
     if (ccnl_ndntlv_bytes2pkt_partial(*pkt_type, start, data, size,
-                                      &ccnl_pkt, 0, size) < 0) {
+                                      &ccnl_pkt, 0, datagram_size) < 0) {
         DEBUG("6lo vrb NDN: no prefix found in packet\n");
         return NULL;
     }
     else if (ccnl_pkt) {
         if (ccnl_pkt->pfx) {
+            ccnl_pkt->type = *pkt_type;
             return ccnl_pkt;
         }
-        DEBUG("6lo vrb NDN: parsable packet, but name incomplete\n")
+        DEBUG("6lo vrb NDN: parsable packet, but name incomplete\n");
         ccnl_pkt_free(ccnl_pkt);
         return NULL;
     }
@@ -203,7 +209,7 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
             uint64_t type;
             struct ccnl_pkt_s *ccnl_pkt;
 
-            ccnl_pkt = _preparse_ndn(hdr, &type);
+            ccnl_pkt = _preparse_ndn(hdr, &type, base->datagram_size);
             if (!ccnl_pkt) {
                 DEBUG("6lo vrb: unable to find NDN prefix\n");
                 break;
@@ -270,6 +276,27 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
                                         pi->face->peer.linklayer.sll_addr,
                                         pi->face->peer.linklayer.sll_halen
                                     );
+#if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+                                if (res) {
+                                    struct ccnl_content_s *c, *cs;
+
+                                    c = ccnl_content_new(&ccnl_pkt);
+                                    if (c == NULL) {
+                                        DEBUG("vrb: unable to create content entry\n");
+                                    }
+                                    else if ((cs = ccnl_content_add2cache(
+                                                &ccnl_relay, c
+                                             ))) {
+                                        cs->del_cb = gnrc_sixlowpan_frag_vrep_del_store;
+                                        cs->del_cb_ctx = res;
+                                        res->store = cs;
+                                    }
+                                    else {
+                                        DEBUG("vrb: unable to add TENTATIVE packet to cache\n");
+                                        ccnl_content_free(c);
+                                    }
+                                }
+#endif
                                 break;
                             }
                         }
@@ -281,6 +308,9 @@ gnrc_sixlowpan_frag_vrb_t *gnrc_sixlowpan_frag_vrb_from_route(
                           (unsigned)type);
                     break;
             }
+
+            /* if packet was added to content store, `ccnl_pkt` is NULL and is
+             * not freed here */
             ccnl_pkt_free(ccnl_pkt);
             break;
         }

@@ -28,6 +28,7 @@
 #include "net/gnrc/sixlowpan/frag/fb.h"
 #include "net/gnrc/sixlowpan/frag/rb.h"
 #include "net/gnrc/sixlowpan/frag/vrb.h"
+#include "net/gnrc/sixlowpan/frag/vrep.h"
 #include "net/sixlowpan/sfr.h"
 #include "thread.h"
 #include "xtimer.h"
@@ -417,11 +418,15 @@ int gnrc_sixlowpan_frag_sfr_forward(gnrc_pktsnip_t *pkt,
     gnrc_pktsnip_t *hdrsnip = gnrc_pktbuf_add(pkt, rfrag, sizeof(*rfrag),
                                               GNRC_NETTYPE_SIXLOWPAN);
 
-    /* free all intervals associated to the VRB entry, as we don't need them
-     * with SFR, so throw them out, to save this resource */
-    while (vrbe->super.ints) {
-        vrbe->super.ints->end = 0U;
-        vrbe->super.ints = vrbe->super.ints->next;
+    DEBUG("6lo sfr:forward: VREP? %d\n",
+          gnrc_sixlowpan_frag_vrep_is(vrbe));
+    if (!(gnrc_sixlowpan_frag_vrep_is(vrbe))) {
+        /* free all intervals associated to the VRB entry, as we don't need them
+         * with SFR, so throw them out, to save this resource */
+        while (vrbe->super.ints) {
+            vrbe->super.ints->end = 0U;
+            vrbe->super.ints = vrbe->super.ints->next;
+        }
     }
     if (hdrsnip == NULL) {
         DEBUG("6lo sfr: Unable to allocate new rfrag header\n");
@@ -904,6 +909,35 @@ end:
     gnrc_pktbuf_release(netif_snip);    /* release hold */
 }
 
+static bool _log_frag(gnrc_sixlowpan_frag_vrb_t *entry,
+                      uint16_t offset, uint16_t frag_size,
+                      gnrc_pktsnip_t *frag)
+{
+    gnrc_sixlowpan_frag_rb_int_t *interval;
+    bool update_ints = true;
+
+    switch (gnrc_sixlowpan_frag_rb_int_check(&entry->super, offset,
+                                             frag_size)) {
+        case RBUF_ADD_REPEAT:
+            DEBUG("6lo sfr: overlapping intervals in VREP, "
+                  "discarding datagram\n");
+            gnrc_sixlowpan_frag_vrb_rm(entry);
+            return false;
+        case RBUF_ADD_DUPLICATE:
+            DEBUG("6lo sfr: duplicate in VREP\n");
+            update_ints = false;
+            /* intentionally falls through */
+        default:
+            break;
+    }
+    if (update_ints &&
+        (interval = gnrc_sixlowpan_frag_rb_int_update(&entry->super, offset,
+                                                      frag_size))) {
+        gnrc_sixlowpan_frag_vrep_log_frag(entry, interval, frag);
+    }
+    return true;
+}
+
 static void _forward_uncomp(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                             unsigned page, _generic_rb_entry_t *entry,
                             void *payload)
@@ -950,11 +984,13 @@ static void _forward_uncomp(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
     vrb_base.arrival = xtimer_now_usec();
     memcpy(vrb_base.src, gnrc_netif_hdr_get_src_addr(netif_hdr),
            vrb_base.src_len);
+    DEBUG("6lo sfr:_forward_uncomp: VREP? %d\n",
+          IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP));
     entry->entry.vrb = gnrc_sixlowpan_frag_vrb_from_route(&vrb_base,
                                                           NULL, &tmp);
     if (entry->entry.vrb == NULL) {
         DEBUG("6lo sfr: no route found or no VRB space left, "
-              "trying reassembly\n");
+              "trying reassembly (tag: %u)\n", vrb_base.tag);
         _try_reassembly(netif_hdr, pkt, 0, entry, page);
         return;
     }
@@ -976,6 +1012,12 @@ static void _forward_uncomp(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
     entry->entry.vrb->in_netif = gnrc_netif_hdr_get_netif(netif_hdr);
     entry->entry.vrb->offset_diff = 0; /* packet is uncompressed so offset
                                         * does not change */
+    if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)) {
+        if (!_log_frag(entry->entry.vrb, 0, tmp.size, pkt)) {
+            DEBUG("6lo sfr:_forward_uncomp: overlap in VREP. Bail.\n");
+            return;
+        }
+    }
     _forward_rfrag(pkt, entry, sixlowpan_sfr_rfrag_get_offset(hdr), page);
 }
 
@@ -1064,6 +1106,25 @@ static void _handle_nth_rfrag(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
             netif_hdr->src_l2addr_len, hdr->base.tag)) != NULL) {
         entry->type = _VRB;
         entry->entry.base->arrival = xtimer_now_usec();
+        DEBUG("6lo sfr:_handle_nth_rfrag: VREP? %d\n",
+              gnrc_sixlowpan_frag_vrep_is(entry->entry.vrb));
+        if (gnrc_sixlowpan_frag_vrep_is(entry->entry.vrb)) {
+            if (!_log_frag(entry->entry.vrb, offset,
+                           sixlowpan_sfr_rfrag_get_frag_size(hdr),
+                           pkt)) {
+                DEBUG("6lo sfr:_handle_nth_rfrag: overlap in VREP. Bail.\n");
+                return;
+            }
+            DEBUG("6lo sfr: check if datagram complete\n"
+                  "         current_size = %u\n"
+                  "         datagram_size = %u\n",
+                  entry->entry.base->current_size,
+                  entry->entry.base->datagram_size);
+            if (gnrc_sixlowpan_frag_vrep_complete(entry->entry.base)) {
+                DEBUG("6lo sfr: virtually reassemble datagram\n");
+                gnrc_sixlowpan_frag_vrep_reass(entry->entry.vrb);
+            }
+        }
         _forward_rfrag(pkt, entry, offset, page);
     }
     else {
@@ -1500,6 +1561,72 @@ static void _handle_rfrag(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
     }
 }
 
+static bool _resend_rfrag_from_vrep(gnrc_sixlowpan_frag_vrb_t *vrbe,
+                                    gnrc_pktsnip_t *pkt, unsigned page)
+{
+    /* `fint->seq` is not in `fint` when used without VREP, so `#if` is needed.
+     * This function uses SFR-internal mechanisms, so we can't move it to
+     * `gnrc_sixlowpan_frag_vrep`. */
+#if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+    sixlowpan_sfr_ack_t *ack = pkt->data;
+
+    DEBUG("6lo sfr:_handle_ack: VREP? %d\n",
+          gnrc_sixlowpan_frag_vrep_is(vrbe));
+    if (gnrc_sixlowpan_frag_vrep_is(vrbe) &&
+        (_bitmap_to_u32(ack->bitmap) > 0) &&
+        (_bitmap_to_u32(ack->bitmap) < UINT32_MAX)) {
+        gnrc_sixlowpan_frag_rb_int_t *fint;
+
+        for (fint = vrbe->super.ints; fint; fint = fint->next) {
+            if (!bf_isset(ack->bitmap, fint->seq)) {
+                _generic_rb_entry_t entry = {
+                    .type = _VRB,
+                    .entry = { .vrb = vrbe }
+                };
+                gnrc_pktsnip_t *frag = gnrc_sixlowpan_frag_vrep_get_frag(vrbe,
+                                                                         fint);
+                if (!frag) {
+                    DEBUG("6lo sfr: unable to get fragment (%u, %u, seq=%u) "
+                          "from VREP\n", fint->start, fint->end, fint->seq);
+                    continue;
+                }
+                DEBUG("6lo sfr: fragment stored in VREP\n");
+                if (_forward_rfrag(frag, &entry,
+                                   (fint->start > 0)
+                                   ? sixlowpan_sfr_rfrag_get_offset(frag->data)
+                                   : 0, page) == 0) {
+                    DEBUG("6lo sfr: VREP replied with stored fragment\n");
+                    if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_SFR_STATS)) {
+                        /* fix stats, fragment was not forwarded as counted in
+                         * `_forward_frag()`, but resent */
+                        _stats.fragments_sent.forwarded--;
+                        _stats.fragment_resends.by_nack++;
+                    }
+                    bf_set(ack->bitmap, fint->seq);
+                }
+                else {
+                    DEBUG("6lo sfr: unable to reply with stored fragment\n");
+                }
+            }
+            else {
+                DEBUG("6lo sfr: fragment (%u, %u, seq=%u) was ACK'd\n",
+                      fint->start, fint->end, fint->seq);
+            }
+        }
+    }
+    else if (gnrc_sixlowpan_frag_vrep_is(vrbe) &&
+             (_bitmap_to_u32(ack->bitmap) == UINT32_MAX)) {
+        gnrc_sixlowpan_frag_vrep_reass(vrbe);
+    }
+    return true;
+#else
+    (void)vrbe;
+    (void)pkt;
+    (void)page;
+    return false;
+#endif
+}
+
 static void _handle_ack(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
                         unsigned page)
 {
@@ -1522,8 +1649,10 @@ static void _handle_ack(gnrc_netif_hdr_t *netif_hdr, gnrc_pktsnip_t *pkt,
         DEBUG("6lo sfr: forward ACK to (%s, %02x)\n",
               gnrc_netif_addr_to_str(vrbe->super.src, vrbe->super.src_len,
                                      addr_str), vrbe->super.tag);
-        _send_ack(vrbe->in_netif, vrbe->super.src, vrbe->super.src_len,
-                  &mock_base, hdr->bitmap);
+        if (_resend_rfrag_from_vrep(vrbe, pkt, page)) {
+            _send_ack(vrbe->in_netif, vrbe->super.src, vrbe->super.src_len,
+                      &mock_base, hdr->bitmap);
+        }
         if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_SFR_STATS)) {
             _stats.acks.forwarded++;
         }

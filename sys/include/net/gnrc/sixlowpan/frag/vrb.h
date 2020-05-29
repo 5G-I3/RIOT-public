@@ -25,6 +25,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#if IS_USED(MODULE_CCN_LITE)
+#include "ccn-lite-riot.h"
+#undef DEBUG
+#endif
 #include "kernel_defines.h"
 #include "net/gnrc/netif.h"
 #include "net/gnrc/sixlowpan/config.h"
@@ -56,6 +60,9 @@ typedef struct {
     uint16_t out_tag;
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_SFR
     int16_t offset_diff;    /**< offset change due to recompression */
+#if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+    void *store;            /**< storage area for VREP */
+#endif
     /**
      * @brief   Incoming interface to gnrc_sixlowpan_frag_rb_base_t::src
      */
@@ -151,6 +158,20 @@ static inline void gnrc_sixlowpan_frag_vrb_rm(gnrc_sixlowpan_frag_vrb_t *vrb)
     if (IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_RB)) {
         gnrc_sixlowpan_frag_rb_base_rm(&vrb->super);
     }
+#if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+# if IS_USED(MODULE_CCN_LITE)
+    if (vrb->store) {
+        struct ccnl_content_s *c = vrb->store;
+
+        c->del_cb = NULL;
+        c->del_cb_ctx = NULL;
+        if (!c->pkt || (c->pkt->flags & CCNL_PKT_TENTATIVE)) {
+            ccnl_content_remove(&ccnl_relay, c);
+        }
+        vrb->store = NULL;
+    }
+# endif
+#endif
     vrb->super.src_len = 0;
 }
 

@@ -29,6 +29,7 @@
 #ifdef  MODULE_GNRC_SIXLOWPAN_FRAG_VRB
 #include "net/gnrc/sixlowpan/frag/vrb.h"
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_VRB */
+#include "net/gnrc/sixlowpan/frag/vrep.h"
 #include "net/sixlowpan.h"
 #include "thread.h"
 #include "xtimer.h"
@@ -49,8 +50,14 @@
 #ifndef RBUF_INT_SIZE
 /* same as ((int) ceil((double) N / D)) */
 #define DIV_CEIL(N, D) (((N) + (D) - 1) / (D))
+# if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+#define RBUF_INT_SIZE (DIV_CEIL(IPV6_MIN_MTU, GNRC_SIXLOWPAN_FRAG_SIZE) * \
+                       (CONFIG_GNRC_SIXLOWPAN_FRAG_RBUF_SIZE + \
+                        CONFIG_GNRC_SIXLOWPAN_FRAG_VRB_SIZE))
+# else  /* IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP) */
 #define RBUF_INT_SIZE (DIV_CEIL(IPV6_MIN_MTU, GNRC_SIXLOWPAN_FRAG_SIZE) * \
                        CONFIG_GNRC_SIXLOWPAN_FRAG_RBUF_SIZE)
+# endif /* IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP) */
 #endif
 
 static gnrc_sixlowpan_frag_rb_int_t rbuf_int[RBUF_INT_SIZE];

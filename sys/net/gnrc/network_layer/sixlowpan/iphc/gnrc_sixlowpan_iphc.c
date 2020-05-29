@@ -32,6 +32,7 @@
 #ifdef MODULE_GNRC_SIXLOWPAN_FRAG_VRB
 #include "net/gnrc/sixlowpan/frag/vrb.h"
 #endif  /* MODULE_GNRC_SIXLOWPAN_FRAG_VRB */
+#include "net/gnrc/sixlowpan/frag/vrep.h"
 #include "net/gnrc/sixlowpan/internal.h"
 #include "net/sixlowpan.h"
 #include "utlist.h"
@@ -905,8 +906,10 @@ void gnrc_sixlowpan_iphc_recv(gnrc_pktsnip_t *sixlo, void *rbuf_ptr,
                 if ((res = _forward_frag(ipv6, sixlo->next, vrbe, page)) == 0) {
                     DEBUG("6lo iphc: successfully recompressed and forwarded "
                           "1st fragment\n");
-                    /* empty list, as it should be in VRB now */
-                    rbuf->super.ints = NULL;
+                    if (!gnrc_sixlowpan_frag_vrep_is(&rbuf->super)) {
+                        /* empty list, as it should be in VRB now */
+                        rbuf->super.ints = NULL;
+                    }
                 }
             }
             if ((ipv6 == NULL) || (res < 0)) {

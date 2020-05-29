@@ -56,6 +56,11 @@ typedef struct gnrc_sixlowpan_frag_rb_int {
     struct gnrc_sixlowpan_frag_rb_int *next;
     uint16_t start;             /**< start byte of the fragment interval */
     uint16_t end;               /**< end byte of the fragment interval */
+#if IS_USED(MODULE_GNRC_SIXLOWPAN_FRAG_VREP)
+    uint8_t seq;
+    uint8_t ack_req;
+    uint8_t ecn;
+#endif
 } gnrc_sixlowpan_frag_rb_int_t;
 
 /**
