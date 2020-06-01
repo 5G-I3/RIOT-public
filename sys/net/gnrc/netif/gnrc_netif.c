@@ -37,6 +37,7 @@
 #endif
 #include "fmt.h"
 #include "log.h"
+#include "random.h"
 #include "sched.h"
 #include "xtimer.h"
 
@@ -1391,6 +1392,14 @@ static void _send_queued_pkt(gnrc_netif_t *netif)
 
 static void _send(gnrc_netif_t *netif, gnrc_pktsnip_t *pkt, bool requeue)
 {
+#if IS_ACTIVE(CONFIG_GNRC_NETIF_SIMULATED_LOSS)
+    if (random_uint32_range(0, 1000) <= CONFIG_GNRC_NETIF_SIMULATED_LOSS) {
+        DEBUG("gnrc_netif: simulate %u%% loss\n",
+              CONFIG_GNRC_NETIF_SIMULATED_LOSS);
+        gnrc_pktbuf_release(pkt);
+        return;
+    }
+#endif
 #ifdef MODULE_GNRC_NETIF_PKTQ
     /* send queued packets first to keep order */
     if (!requeue && !gnrc_netif_pktq_empty(netif)) {
