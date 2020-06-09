@@ -1357,8 +1357,10 @@ static void _send(gnrc_netif_t *netif, gnrc_pktsnip_t *pkt, bool requeue);
 static void _sched_dequeue(gnrc_netif_t *netif)
 {
     netif->dequeue_msg.type = GNRC_NETIF_PKTQ_DEQUEUE_MSG;
+    unsigned state = irq_disable();
     xtimer_set_msg(&netif->dequeue_timer, GNRC_NETIF_PKTQ_TIMER_US,
                    &netif->dequeue_msg, netif->pid);
+    irq_restore(state);
 }
 
 static void _send_queued_pkt(gnrc_netif_t *netif)
